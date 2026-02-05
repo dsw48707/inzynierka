@@ -1,26 +1,23 @@
 import express from 'express';
-import { Asset, AssetHistory, Issue } from './db.js'; // Upewnij się, że importujemy Issue!
+import { Asset, AssetHistory } from './db.js';
 
 const router = express.Router();
 
-// --- ZASOBY (ASSETS) ---
-
-// Pobierz wszystko
 router.get('/assets', async (req, res) => {
     const assets = await Asset.findAll();
     res.json(assets);
 });
 
-// Dodaj sprzęt
 router.post('/assets', async (req, res) => {
     try {
-        const { name, serialNumber, status, assignedTo } = req.body;
-        const newAsset = await Asset.create({ name, serialNumber, status, assignedTo });
+        // Dodajemy category do destrukturyzacji
+        const { name, category, serialNumber, status, assignedTo } = req.body;
         
-        // Log do historii
+        const newAsset = await Asset.create({ name, category, serialNumber, status, assignedTo });
+        
         await AssetHistory.create({
             action: 'UTWORZENIE',
-            description: `Dodano sprzęt: ${name} (${status})`,
+            description: `Dodano: ${category} ${name} (${status})`,
             AssetId: newAsset.id
         });
 
@@ -30,7 +27,6 @@ router.post('/assets', async (req, res) => {
     }
 });
 
-// Edytuj sprzęt
 router.put('/assets/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -38,6 +34,9 @@ router.put('/assets/:id', async (req, res) => {
         if (!oldAsset) return res.status(404).json({ error: 'Nie znaleziono' });
 
         const changes = [];
+        // Sprawdzamy zmiany
+        if (req.body.name !== oldAsset.name) changes.push(`Zmiana modelu: ${oldAsset.name} -> ${req.body.name}`);
+        if (req.body.category !== oldAsset.category) changes.push(`Zmiana kategorii: ${oldAsset.category} -> ${req.body.category}`);
         if (req.body.status !== oldAsset.status) changes.push(`Zmiana statusu: ${oldAsset.status} -> ${req.body.status} (Przypisano do: ${req.body.assignedTo || 'Brak'})`);
         if (req.body.assignedTo !== oldAsset.assignedTo) changes.push(`Zmiana użytkownika: ${oldAsset.assignedTo} -> ${req.body.assignedTo}`);
 
@@ -56,13 +55,10 @@ router.put('/assets/:id', async (req, res) => {
     }
 });
 
-// Usuń sprzęt
 router.delete('/assets/:id', async (req, res) => {
     await Asset.destroy({ where: { id: req.params.id } });
     res.json({ success: true });
 });
-
-// --- HISTORIA ---
 
 router.get('/assets/:id/history', async (req, res) => {
     const history = await AssetHistory.findAll({ 
@@ -70,46 +66,6 @@ router.get('/assets/:id/history', async (req, res) => {
         order: [['createdAt', 'DESC']]
     });
     res.json(history);
-});
-
-// --- ZGŁOSZENIA (ISSUES) - NOWOŚĆ ---
-
-// Pobierz zgłoszenia (z dołączonym info o sprzęcie)
-router.get('/issues', async (req, res) => {
-    try {
-        const issues = await Issue.findAll({ 
-            include: Asset,
-            order: [['createdAt', 'DESC']]
-        });
-        res.json(issues);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Dodaj zgłoszenie
-router.post('/issues', async (req, res) => {
-    try {
-        const { title, description, priority, AssetId, reportedBy, userEmail } = req.body;
-        const newIssue = await Issue.create({
-            title, description, priority, AssetId, reportedBy, userEmail
-        });
-        res.json(newIssue);
-    } catch (err) {
-        res.status(400).json({ error: "Błąd tworzenia zgłoszenia." });
-    }
-});
-
-// Aktualizuj status zgłoszenia
-router.put('/issues/:id', async (req, res) => {
-    try {
-        const { status } = req.body;
-        await Issue.update({ status }, { where: { id: req.params.id } });
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
 });
 
 export default router;
