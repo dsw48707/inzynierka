@@ -214,7 +214,6 @@ function App() {
 
   return (
     <div className="app-layout">
-      {/* TĘ LISTĘ WYKORZYSTUJEMY TERAZ TAKŻE W FILTRACH */}
       <datalist id="azure-users-list">{azureUsers.map(u => <option key={u.id} value={u.displayName}>{u.userPrincipalName}</option>)}</datalist>
 
       <aside className="sidebar">
@@ -267,7 +266,6 @@ function App() {
         {isAdmin && activeView === 'assets' && (
           <div className="dashboard-view">
              
-             {/* PASEK FILTRÓW Z PODPOWIADANIEM UŻYTKOWNIKA */}
              <div className="filters-bar">
                 <select value={filterCategory} onChange={e => { setFilterCategory(e.target.value); setFilterManufacturer(""); }} className="filter-select">
                     <option value="">Wszystkie Kategorie</option>
@@ -281,7 +279,6 @@ function App() {
                     ))}
                 </select>
 
-                {/* TUTAJ DODANO list="azure-users-list" */}
                 <input 
                     type="text" 
                     placeholder="Filtruj po użytkowniku..." 
