@@ -10,7 +10,6 @@ router.get('/assets', async (req, res) => {
 
 router.post('/assets', async (req, res) => {
     try {
-        // Dodajemy category do destrukturyzacji
         const { name, category, serialNumber, status, assignedTo } = req.body;
         
         const newAsset = await Asset.create({ name, category, serialNumber, status, assignedTo });
@@ -67,5 +66,26 @@ router.get('/assets/:id/history', async (req, res) => {
     });
     res.json(history);
 });
+// W pliku api/routes.js
 
+// Zamiast app.get wpisz router.get
+// Zamiast '/api/dashboard-stats' wpisz '/dashboard-stats'
+router.get('/dashboard-stats', async (req, res) => {
+  try {
+    const total = await Asset.count();
+    const available = await Asset.count({ where: { status: 'AVAILABLE' } });
+    const assigned = await Asset.count({ where: { status: 'ASSIGNED' } });
+    const broken = await Asset.count({ where: { status: 'BROKEN' } });
+    
+    const recent = await Asset.findAll({
+      limit: 5,
+      order: [['createdAt', 'DESC']]
+    });
+
+    res.json({ total, available, assigned, broken, recent });
+  } catch (err) {
+    console.error("Błąd dashboardu:", err);
+    res.status(500).json({ error: 'Błąd serwera' });
+  }
+});
 export default router;

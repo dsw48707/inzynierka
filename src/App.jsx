@@ -2,6 +2,14 @@ import { useState, useEffect } from 'react'
 import './App.css'
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
 import { loginRequest, graphConfig } from "./authConfig";
+import { 
+  PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer 
+} from 'recharts';
+import { 
+  LayoutDashboard, Package, History, LogOut, Plus, Search, 
+  Laptop, CheckCircle, UserCheck, AlertTriangle, RotateCcw, 
+  ChevronDown, ChevronUp, Box, Calendar, Activity, MousePointerClick
+} from 'lucide-react';
 
 const hardwareOptions = {
   "Laptop": {
@@ -31,10 +39,10 @@ function App() {
 
   const [assets, setAssets] = useState([]);
   const [azureUsers, setAzureUsers] = useState([]);
+  const [stats, setStats] = useState({ total: 0, available: 0, assigned: 0, broken: 0, recent: [] });
   
   const [searchTerm, setSearchTerm] = useState(""); 
   const [historySearchTerm, setHistorySearchTerm] = useState(""); 
-
   const [filterCategory, setFilterCategory] = useState("");
   const [filterManufacturer, setFilterManufacturer] = useState("");
   const [filterUser, setFilterUser] = useState("");
@@ -64,11 +72,16 @@ function App() {
       const claims = accounts[0].idTokenClaims;
       const isAdminRole = claims?.roles && claims.roles.includes("AppAdmin");
       setIsAdmin(isAdminRole);
-      if (!isAdminRole && (activeView === 'assets' || activeView === 'history')) {
-        setActiveView('my_assets');
+      
+      if (isAdminRole) {
+         if (activeView === 'my_assets') setActiveView('dashboard');
+      } else {
+         setActiveView('my_assets');
       }
+
       fetchAssets();
       fetchAzureUsers();
+      fetchStats();
     } else {
       setIsAdmin(false);
     }
@@ -78,7 +91,8 @@ function App() {
     if (!isAuthenticated) return;
     const interval = setInterval(() => {
         fetchAssets();
-        if (expandedAssetId && activeView === 'history') {
+        fetchStats();
+        if (expandedAssetId) {
             fetch(`/api/assets/${expandedAssetId}/history`)
                 .then(r => r.json())
                 .then(data => {
@@ -91,14 +105,21 @@ function App() {
                 })
                 .catch(console.error);
         }
-    }, 2000);
+    }, 5000);
     return () => clearInterval(interval);
-  }, [isAuthenticated, expandedAssetId, activeView]);
+  }, [isAuthenticated, expandedAssetId]);
 
   const fetchAzureUsers = () => {
     instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] }).then(res => {
         callMsGraph(res.accessToken).then(r => { if(r && r.value) setAzureUsers(r.value); });
     }).catch(console.error);
+  };
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch('/api/dashboard-stats');
+      if (res.ok) setStats(await res.json());
+    } catch (e) { console.error(e); }
   };
 
   async function callMsGraph(token) {
@@ -114,6 +135,13 @@ function App() {
       instance.logoutRedirect();
   };
 
+  const resetFilters = () => {
+    setSearchTerm("");
+    setFilterCategory("");
+    setFilterManufacturer("");
+    setFilterUser("");
+  };
+
   const handleAddSubmit = (e) => {
     e.preventDefault();
     const fullName = `${addManufacturer} ${addModel}`;
@@ -127,6 +155,7 @@ function App() {
     .then(res => { 
         if(res.ok) { 
             fetchAssets(); 
+            fetchStats();
             setNewItem({ serialNumber: '', status: 'AVAILABLE', assignedTo: '' });
             setAddCategory(""); setAddManufacturer(""); setAddModel("");
             setIsAddModalOpen(false); 
@@ -139,19 +168,17 @@ function App() {
     const payload = { ...editingItem };
     if (payload.status !== 'ASSIGNED') payload.assignedTo = null;
     fetch(`/api/assets/${editingItem.id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)})
-    .then(res => { if(res.ok) { fetchAssets(); setIsEditModalOpen(false); setEditingItem(null); }});
+    .then(res => { if(res.ok) { fetchAssets(); fetchStats(); setIsEditModalOpen(false); setEditingItem(null); }});
   };
 
   const confirmDelete = () => {
     if(!idToDelete) return;
-    fetch(`/api/assets/${idToDelete}`, { method: 'DELETE' }).then(res => { if(res.ok) { fetchAssets(); setIsDeleteModalOpen(false); setIdToDelete(null); }});
+    fetch(`/api/assets/${idToDelete}`, { method: 'DELETE' }).then(res => { if(res.ok) { fetchAssets(); fetchStats(); setIsDeleteModalOpen(false); setIdToDelete(null); }});
   };
 
   const requestSort = (key) => {
     let direction = 'ascending';
-    if (sortConfig.key === key && sortConfig.direction === 'ascending') {
-      direction = 'descending';
-    }
+    if (sortConfig.key === key && sortConfig.direction === 'ascending') direction = 'descending';
     setSortConfig({ key, direction });
   };
 
@@ -196,58 +223,168 @@ function App() {
   const myDevices = assets.filter(a => a.assignedTo === accounts[0]?.name);
 
   const toggleHistoryExpand = (id) => {
-    if(expandedAssetId === id) return;
+    if (expandedAssetId === id) {
+        setExpandedAssetId(null);
+        return;
+    }
     setExpandedAssetId(id);
-    fetch(`/api/assets/${id}/history`).then(r=>r.json()).then(d => setBulkHistoryCache(p => ({...p, [id]:d})));
+    fetch(`/api/assets/${id}/history`)
+        .then(r => r.json())
+        .then(d => setBulkHistoryCache(p => ({...p, [id]:d})))
+        .catch(console.error);
   };
 
   const openEditModal = (a) => { setEditingItem({...a, assignedTo: a.assignedTo||''}); setIsEditModalOpen(true); };
   const openDeleteModal = (id) => { setIdToDelete(id); setIsDeleteModalOpen(true); };
 
+  const renderDashboard = () => {
+    const pieData = [
+      { name: 'Dostępne', value: stats.available },
+      { name: 'Przypisane', value: stats.assigned },
+      { name: 'Uszkodzone', value: stats.broken },
+    ];
+    const COLORS = ['#10B981', '#3B82F6', '#EF4444'];
+
+    return (
+      <div className="dashboard-container fade-in">
+        <h2 className="page-header">Panel Główny</h2>
+        
+        <div className="stats-grid">
+          <div className="stat-card">
+            <div className="icon-wrapper indigo"><Laptop size={24} /></div>
+            <div>
+              <p className="stat-label">Wszystkie Zasoby</p>
+              <h3 className="stat-value">{stats.total}</h3>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="icon-wrapper green"><CheckCircle size={24} /></div>
+            <div>
+              <p className="stat-label">Dostępne</p>
+              <h3 className="stat-value">{stats.available}</h3>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="icon-wrapper blue"><UserCheck size={24} /></div>
+            <div>
+              <p className="stat-label">Przypisane</p>
+              <h3 className="stat-value">{stats.assigned}</h3>
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="icon-wrapper red"><AlertTriangle size={24} /></div>
+            <div>
+              <p className="stat-label">Uszkodzone</p>
+              <h3 className="stat-value">{stats.broken}</h3>
+            </div>
+          </div>
+        </div>
+
+        <div className="charts-section">
+          <div className="chart-card">
+            <h3>Status Sprzętu</h3>
+            <div style={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend verticalAlign="bottom" height={36}/>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="chart-card">
+            <h3>Ostatnio dodane</h3>
+            <table className="recent-table">
+              <thead><tr><th>Nazwa</th><th>S/N</th><th>Status</th></tr></thead>
+              <tbody>
+                {stats.recent.map(item => (
+                  <tr key={item.id}>
+                    <td>{item.name}</td>
+                    <td className="text-muted">{item.serialNumber}</td>
+                    <td><span className={`status-dot ${item.status.toLowerCase()}`}></span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   if (!isAuthenticated) return (
       <div className="login-container">
-         <h1>Magazyn IT</h1>
-         <p style={{marginBottom: '30px', color: '#6b7280'}}>Zaloguj się, aby uzyskać dostęp do panelu.</p>
-         <button className="login-btn" onClick={handleLogin}>Zaloguj (Microsoft)</button>
+         <div className="login-box">
+             <h1>Magazyn IT</h1>
+             <p>Zaloguj się, aby uzyskać dostęp do panelu.</p>
+             <button className="login-btn" onClick={handleLogin}>Zaloguj (Microsoft)</button>
+         </div>
       </div>
   );
 
   return (
     <div className="app-layout">
-      {/* TĘ LISTĘ WYKORZYSTUJEMY TERAZ TAKŻE W FILTRACH */}
       <datalist id="azure-users-list">{azureUsers.map(u => <option key={u.id} value={u.displayName}>{u.userPrincipalName}</option>)}</datalist>
 
       <aside className="sidebar">
-        <h2>Magazyn IT</h2>
-        <nav>
+        <div className="sidebar-top">
+           <h2>Magazyn IT</h2>
+           <p className="role-badge">{isAdmin ? 'Administrator' : 'Użytkownik'}</p>
+        </div>
+        
+        <nav style={{ flex: 1 }}>
           {isAdmin ? (
             <>
+              <button className={`nav-btn ${activeView === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveView('dashboard')}>
+                <LayoutDashboard size={20} /> Dashboard
+              </button>
               <button className={`nav-btn ${activeView === 'assets' ? 'active' : ''}`} onClick={() => setActiveView('assets')}>
-                <span>📦</span> Baza Sprzętu
+                <Package size={20} /> Baza Sprzętu
               </button>
               <button className={`nav-btn ${activeView === 'history' ? 'active' : ''}`} onClick={() => setActiveView('history')}>
-                <span>📜</span> Pełna Historia
+                <History size={20} /> Pełna Historia
               </button>
             </>
           ) : (
              <button className={`nav-btn ${activeView === 'my_assets' ? 'active' : ''}`} onClick={() => setActiveView('my_assets')}>
-                <span>💻</span> Mój Sprzęt
+                <Laptop size={20} /> Mój Sprzęt
              </button>
           )}
         </nav>
-        {isAdmin && <button className="nav-btn action-btn" onClick={() => setIsAddModalOpen(true)}><span>➕</span> Dodaj Sprzęt</button>}
+        
+        {isAdmin && (
+            <div className="add-btn-wrapper">
+                <button className="add-btn-main" onClick={() => setIsAddModalOpen(true)}>
+                    <Plus size={18}/> Dodaj Sprzęt
+                </button>
+            </div>
+        )}
+
         <div className="bottom-section">
-          <div style={{fontSize:'0.85rem', marginBottom:'10px', color:'#9ca3af'}}>Zalogowano jako:<br/><strong style={{color:'white'}}>{accounts[0]?.name}</strong></div>
-          <button className="logout-btn" style={{width:'100%'}} onClick={handleLogout}>Wyloguj</button>
+          <div className="user-info">
+             <div className="avatar">{accounts[0]?.name.charAt(0)}</div>
+             <div className="user-details">
+                <span className="user-label">Zalogowano jako</span>
+                <span className="user-name">{accounts[0]?.name}</span>
+             </div>
+          </div>
+          <button className="logout-btn" onClick={handleLogout}><LogOut size={16}/> Wyloguj</button>
         </div>
       </aside>
 
       <main className="main-content">
+        {activeView === 'dashboard' && renderDashboard()}
         
         {activeView === 'my_assets' && (
-            <div className="dashboard-view">
+            <div className="view-container">
                 <div className="page-header"><h2>Mój przypisany sprzęt</h2></div>
-                <div className="table-wrapper">
+                <div className="card">
                     <table>
                         <thead><tr><th>Nazwa / Model</th><th>Numer Seryjny</th><th>Status</th></tr></thead>
                         <tbody>
@@ -255,9 +392,9 @@ function App() {
                                 <tr key={device.id}>
                                     <td><span style={{fontWeight:'bold'}}>{device.name}</span></td>
                                     <td>{device.serialNumber}</td>
-                                    <td><span className="status assigned">PRZYPISANY</span></td>
+                                    <td><span className="status-badge assigned">PRZYPISANY</span></td>
                                 </tr>
-                            )) : <tr><td colSpan="3" style={{textAlign:'center', padding:'20px', color:'#9ca3af'}}>Brak sprzętu.</td></tr>}
+                            )) : <tr><td colSpan="3" className="empty-state">Brak sprzętu.</td></tr>}
                         </tbody>
                     </table>
                 </div>
@@ -265,64 +402,96 @@ function App() {
         )}
 
         {isAdmin && activeView === 'assets' && (
-          <div className="dashboard-view">
-             
-             {/* PASEK FILTRÓW Z PODPOWIADANIEM UŻYTKOWNIKA */}
+          <div className="view-container">
              <div className="filters-bar">
+                <div className="search-wrapper">
+                   <Search size={18} className="search-icon"/>
+                   <input type="text" placeholder="Szukaj (S/N, Nazwa)..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} />
+                </div>
+
                 <select value={filterCategory} onChange={e => { setFilterCategory(e.target.value); setFilterManufacturer(""); }} className="filter-select">
                     <option value="">Wszystkie Kategorie</option>
                     {Object.keys(hardwareOptions).map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-
+                
                 <select value={filterManufacturer} onChange={e => setFilterManufacturer(e.target.value)} disabled={!filterCategory} className="filter-select">
                     <option value="">Wszyscy Producenci</option>
                     {filterCategory && hardwareOptions[filterCategory] && Object.keys(hardwareOptions[filterCategory]).map(m => (
                         <option key={m} value={m}>{m}</option>
                     ))}
                 </select>
-
-                {/* TUTAJ DODANO list="azure-users-list" */}
-                <input 
-                    type="text" 
-                    placeholder="Filtruj po użytkowniku..." 
-                    value={filterUser} 
-                    onChange={e => setFilterUser(e.target.value)} 
-                    className="filter-input"
-                    list="azure-users-list" 
-                />
+                
+                <input type="text" placeholder="Filtruj po użytkowniku..." value={filterUser} onChange={e => setFilterUser(e.target.value)} className="filter-input" list="azure-users-list" />
+                
+                <button className="reset-btn" onClick={resetFilters} title="Wyczyść filtry">
+                    <RotateCcw size={18} />
+                </button>
              </div>
 
-             <div className="table-wrapper">
+             <div className="card">
                 <div className="table-toolbar">
                     <h3>Lista urządzeń</h3>
-                    <input type="text" className="search-input" placeholder="Szukaj ogólnie (S/N, Nazwa)..." value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} />
                 </div>
                 <table>
                     <thead>
                         <tr>
-                            <th onClick={() => requestSort('name')} className="sortable">Nazwa / Producent {sortConfig.key === 'name' ? (sortConfig.direction === 'ascending' ? '▲' : '▼') : ''}</th>
-                            <th onClick={() => requestSort('serialNumber')} className="sortable">S/N {sortConfig.key === 'serialNumber' ? (sortConfig.direction === 'ascending' ? '▲' : '▼') : ''}</th>
-                            <th onClick={() => requestSort('assignedTo')} className="sortable">Status / Osoba {sortConfig.key === 'assignedTo' ? (sortConfig.direction === 'ascending' ? '▲' : '▼') : ''}</th>
-                            <th>Akcje</th>
+                            <th onClick={() => requestSort('name')} className="sortable">Nazwa / Producent</th>
+                            <th onClick={() => requestSort('serialNumber')} className="sortable">S/N</th>
+                            <th onClick={() => requestSort('assignedTo')} className="sortable">Status / Osoba</th>
+                            <th style={{textAlign:'right'}}>Akcje</th>
                         </tr>
                     </thead>
                     <tbody>
                         {sortedAssets.length > 0 ? sortedAssets.map(asset => (
-                            <tr key={asset.id}>
-                                <td>{asset.name}</td>
-                                <td>{asset.serialNumber}</td>
-                                <td>
-                                    <span className={`status ${asset.status ? asset.status.toLowerCase() : ''}`}>{asset.status}</span>
-                                    {asset.status === 'ASSIGNED' && asset.assignedTo && <div style={{fontSize:'0.8rem', fontWeight:'600'}}>👤 {asset.assignedTo}</div>}
-                                </td>
-                                <td>
-                                    <div className="action-buttons">
-                                        <button className="edit-btn" onClick={()=>openEditModal(asset)}>Edytuj</button>
-                                        <button className="delete-btn" onClick={()=>openDeleteModal(asset.id)}>Usuń</button>
-                                    </div>
-                                </td>
-                            </tr>
-                        )) : <tr><td colSpan="4" style={{textAlign:'center', padding:'30px', color:'#9ca3af'}}>Brak wyników dla wybranych filtrów.</td></tr>}
+                            <>
+                                <tr key={asset.id} className={expandedAssetId === asset.id ? 'expanded-row-parent' : ''}>
+                                    <td>{asset.name}</td>
+                                    <td>{asset.serialNumber}</td>
+                                    <td>
+                                        <span className={`status-badge ${asset.status.toLowerCase()}`}>
+                                        {asset.status === 'AVAILABLE' ? 'Dostępny' : asset.status === 'ASSIGNED' ? 'Przypisany' : 'Uszkodzony'}
+                                        </span>
+                                        {asset.status === 'ASSIGNED' && asset.assignedTo && <div className="assigned-user-small">{asset.assignedTo}</div>}
+                                    </td>
+                                    <td>
+                                        <div className="action-buttons right-align">
+                                            <button 
+                                                className={`text-btn history-btn ${expandedAssetId === asset.id ? 'active' : ''}`} 
+                                                onClick={() => toggleHistoryExpand(asset.id)}
+                                            >
+                                                Historia {expandedAssetId === asset.id ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
+                                            </button>
+                                            <button className="text-btn edit-btn" onClick={()=>openEditModal(asset)}>Edytuj</button>
+                                            <button className="text-btn delete-btn" onClick={()=>openDeleteModal(asset.id)}>Usuń</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                
+                                {expandedAssetId === asset.id && (
+                                    <tr className="history-expansion-row">
+                                        <td colSpan="4">
+                                            <div className="history-expansion-content">
+                                                <h4 style={{marginBottom: '8px'}}>Ostatnia aktywność:</h4>
+                                                {bulkHistoryCache[asset.id] ? (
+                                                    bulkHistoryCache[asset.id].length > 0 ? (
+                                                        <div className="latest-history-item">
+                                                            <div className="hl-date">
+                                                                {new Date(bulkHistoryCache[asset.id][0].createdAt).toLocaleString()}
+                                                            </div>
+                                                            <div className="hl-action">
+                                                                <strong>{bulkHistoryCache[asset.id][0].action}</strong>: {bulkHistoryCache[asset.id][0].description}
+                                                            </div>
+                                                        </div>
+                                                    ) : <p className="text-muted">Brak historii dla tego sprzętu.</p>
+                                                ) : (
+                                                    <p className="loading-text">Ładowanie...</p>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )}
+                            </>
+                        )) : <tr><td colSpan="4" className="empty-state">Brak wyników.</td></tr>}
                     </tbody>
                 </table>
              </div>
@@ -330,31 +499,82 @@ function App() {
         )}
 
         {isAdmin && activeView === 'history' && (
-            <div className="history-view">
+            <div className="view-container" style={{height: '100%'}}>
                <div className="page-header">
                    <h2>Historia zmian</h2>
-                   <div className="search-input-wrapper"><input type="text" className="search-input" placeholder="Szukaj..." value={historySearchTerm} onChange={e=>setHistorySearchTerm(e.target.value)}/><span className="search-icon">🔍</span></div>
+                   <div className="search-wrapper">
+                       <Search size={18} className="search-icon"/>
+                       <input type="text" placeholder="Szukaj w historii (S/N, Nazwa)..." value={historySearchTerm} onChange={e=>setHistorySearchTerm(e.target.value)}/>
+                   </div>
                </div>
+               
                <div className="history-split-container">
                    <div className="history-list-side">
                        {filteredHistoryAssets.length > 0 ? filteredHistoryAssets.map(a => (
-                           <div key={a.id} className={`history-list-card ${expandedAssetId===a.id?'active':''}`} onClick={()=>toggleHistoryExpand(a.id)}>
-                               <div style={{fontWeight:'bold'}}>{a.name}</div><div style={{fontSize:'0.85rem',color:'#6b7280'}}>{a.serialNumber}</div>
+                           <div 
+                               key={a.id} 
+                               className={`history-list-card ${expandedAssetId===a.id?'active':''}`} 
+                               onClick={()=>toggleHistoryExpand(a.id)}
+                           >
+                               <div className="hl-icon-wrapper">
+                                   <Box size={20} />
+                               </div>
+                               <div className="hl-info">
+                                   <div className="asset-name">{a.name}</div>
+                                   <div className="asset-sn">{a.serialNumber}</div>
+                               </div>
                            </div>
-                       )) : <div style={{padding:'20px', textAlign:'center', color:'#9ca3af'}}>Brak wyników</div>}
+                       )) : <div className="empty-state">Brak wyników</div>}
                    </div>
+
                    <div className="history-content-side">
-                       {expandedAssetId && bulkHistoryCache[expandedAssetId] ? bulkHistoryCache[expandedAssetId].map(h => (
-                           <div key={h.id} style={{padding:'15px', borderBottom:'1px solid #eee'}}>
-                               <strong>{h.action}</strong> <span style={{fontSize:'0.8rem', color:'#888'}}>{new Date(h.createdAt).toLocaleString()}</span>
-                               <p>{h.description}</p>
+                       {expandedAssetId && bulkHistoryCache[expandedAssetId] ? (
+                           bulkHistoryCache[expandedAssetId].length > 0 ? (
+                               <div className="timeline">
+                                   {bulkHistoryCache[expandedAssetId].map(h => {
+                                       let actionType = 'update';
+                                       if (h.action.includes('UTWORZENIE') || h.action.includes('CREATE')) actionType = 'create';
+                                       if (h.action.includes('USUNIĘCIE') || h.action.includes('DELETE')) actionType = 'delete';
+
+                                       return (
+                                           <div key={h.id} className={`timeline-item ${actionType}`}>
+                                               <div className="timeline-dot"></div>
+                                               <div className="timeline-date">
+                                                   <Calendar size={12} />
+                                                   {new Date(h.createdAt).toLocaleString()}
+                                               </div>
+                                               <div className="timeline-card">
+                                                   <div className="timeline-header" style={{
+                                                       color: actionType === 'create' ? '#059669' : 
+                                                              actionType === 'delete' ? '#DC2626' : '#2563EB'
+                                                   }}>
+                                                       {h.action}
+                                                   </div>
+                                                   <div className="timeline-desc">
+                                                       {h.description}
+                                                   </div>
+                                               </div>
+                                           </div>
+                                       );
+                                   })}
+                               </div>
+                           ) : (
+                               <div className="history-placeholder">
+                                   <Activity size={48} opacity={0.2} />
+                                   <p>Brak historii dla tego urządzenia.</p>
+                               </div>
+                           )
+                       ) : (
+                           <div className="history-placeholder">
+                               <MousePointerClick size={64} strokeWidth={1} />
+                               <h3>Wybierz sprzęt</h3>
+                               <p>Kliknij element na liście po lewej,<br/>aby zobaczyć jego pełną historię.</p>
                            </div>
-                       )) : <div style={{padding:'20px', textAlign:'center'}}>Wybierz sprzęt z listy...</div>}
+                       )}
                    </div>
                </div>
             </div>
         )}
-
       </main>
 
       {isAddModalOpen && (
@@ -402,7 +622,7 @@ function App() {
         </div>
       )}
       
-      {isDeleteModalOpen && (<div className="modal-overlay"><div className="modal-content"><p>Usunąć?</p><div className="modal-actions"><button className="cancel-btn" onClick={()=>setIsDeleteModalOpen(false)}>Nie</button><button className="confirm-btn" onClick={confirmDelete}>Tak</button></div></div></div>)}
+      {isDeleteModalOpen && (<div className="modal-overlay"><div className="modal-content"><p>Usunąć trwale?</p><div className="modal-actions"><button className="cancel-btn" onClick={()=>setIsDeleteModalOpen(false)}>Nie</button><button className="confirm-btn delete" onClick={confirmDelete}>Tak</button></div></div></div>)}
     </div>
   )
 }
